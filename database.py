@@ -28,33 +28,78 @@ class Base(DeclarativeBase):
     pass
 
 
+# Prevents the starting income from being added repeatedly.
+class SeedMarker(Base):
+    __tablename__ = "seed_markers"
+
+    key: Mapped[str] = mapped_column(
+        String(120),
+        primary_key=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+
 class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(
-        Integer, primary_key=True, autoincrement=True
+        Integer,
+        primary_key=True,
+        autoincrement=True,
     )
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    name: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+    )
+
     category: Mapped[str] = mapped_column(
-        String(80), nullable=False, default="Other"
+        String(80),
+        nullable=False,
+        default="Other",
     )
+
     opening_stock: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
+        Integer,
+        nullable=False,
+        default=0,
     )
+
     current_stock: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
+        Integer,
+        nullable=False,
+        default=0,
     )
+
     unit_cost: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0
+        Float,
+        nullable=False,
+        default=0,
     )
+
     selling_price: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0
+        Float,
+        nullable=False,
+        default=0,
     )
+
+    # Retained for compatibility with older databases.
+    # It is not shown or used in the app interface.
     low_stock_at: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=5
+        Integer,
+        nullable=False,
+        default=5,
     )
+
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
     )
 
 
@@ -70,23 +115,40 @@ class MoneyRecord(Base):
     )
 
     id: Mapped[int] = mapped_column(
-        Integer, primary_key=True, autoincrement=True
+        Integer,
+        primary_key=True,
+        autoincrement=True,
     )
-    record_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    record_date: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+    )
+
     record_type: Mapped[str] = mapped_column(
-        String(20), nullable=False
+        String(20),
+        nullable=False,
     )
+
     category: Mapped[str] = mapped_column(
-        String(80), nullable=False
+        String(80),
+        nullable=False,
     )
+
     description: Mapped[str] = mapped_column(
-        String(240), nullable=False
+        String(240),
+        nullable=False,
     )
+
     amount: Mapped[float] = mapped_column(
-        Float, nullable=False
+        Float,
+        nullable=False,
     )
+
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
     )
 
 
@@ -102,34 +164,59 @@ class StockMovement(Base):
     )
 
     id: Mapped[int] = mapped_column(
-        Integer, primary_key=True, autoincrement=True
+        Integer,
+        primary_key=True,
+        autoincrement=True,
     )
+
     product_id: Mapped[int] = mapped_column(
-        ForeignKey("products.id"), nullable=False
+        ForeignKey("products.id"),
+        nullable=False,
     )
+
     movement_date: Mapped[date] = mapped_column(
-        Date, nullable=False
+        Date,
+        nullable=False,
     )
+
     kind: Mapped[str] = mapped_column(
-        String(30), nullable=False
+        String(30),
+        nullable=False,
     )
+
     quantity: Mapped[int] = mapped_column(
-        Integer, nullable=False
+        Integer,
+        nullable=False,
     )
+
     unit_cost: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0
+        Float,
+        nullable=False,
+        default=0,
     )
+
     unit_price: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0
+        Float,
+        nullable=False,
+        default=0,
     )
+
     total_cost: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0
+        Float,
+        nullable=False,
+        default=0,
     )
+
     total_revenue: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0
+        Float,
+        nullable=False,
+        default=0,
     )
+
     note: Mapped[str] = mapped_column(
-        String(240), nullable=False, default=""
+        String(240),
+        nullable=False,
+        default="",
     )
 
 
@@ -138,11 +225,14 @@ def get_database_url() -> str:
     url: Optional[str] = os.getenv("DATABASE_URL")
 
     if not url:
+
         try:
             import streamlit as st
+
             url = str(
                 st.secrets.get("database_url", "")
             ).strip() or None
+
         except Exception:
             url = None
 
@@ -150,6 +240,7 @@ def get_database_url() -> str:
         return "sqlite:///business_data.db"
 
     if url.startswith("postgres://"):
+
         url = url.replace(
             "postgres://",
             "postgresql+psycopg://",
@@ -157,6 +248,7 @@ def get_database_url() -> str:
         )
 
     elif url.startswith("postgresql://"):
+
         url = url.replace(
             "postgresql://",
             "postgresql+psycopg://",
@@ -197,9 +289,11 @@ def app_today():
     )
 
     try:
+
         return datetime.now(
             ZoneInfo(timezone_name)
         ).date()
 
     except Exception:
+
         return date.today()
