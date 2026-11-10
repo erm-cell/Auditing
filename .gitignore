@@ -1,9 +1,6 @@
 
 __pycache__/
 *.pyc
-.venv/
-venv/
-*.db
-*.sqlite
-.env
+business.db
 .streamlit/secrets.toml
+.env
