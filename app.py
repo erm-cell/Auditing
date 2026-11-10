@@ -1,56 +1,4 @@
-import streamlit as st
 
-st.markdown("""
-<style>
-
-/* Main background */
-.stApp {
-    background-color: #0E1117;
-    color: #F8FAFC;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background-color: #161B22;
-}
-
-/* Cards and containers */
-[data-testid="stMetric"] {
-    background-color: #1E293B;
-    padding: 20px;
-    border-radius: 12px;
-}
-
-/* Text */
-h1, h2, h3, p, label, span {
-    color: #F8FAFC;
-}
-
-/* Input fields */
-.stTextInput input,
-.stNumberInput input,
-.stSelectbox div[data-baseweb="select"] {
-    background-color: #1E293B;
-    color: white;
-    border-radius: 8px;
-}
-
-/* Buttons */
-.stButton button {
-    background-color: #6366F1;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 18px;
-}
-
-/* Dataframes */
-[data-testid="stDataFrame"] {
-    background-color: #1E293B;
-}
-
-</style>
-""", unsafe_allow_html=True)
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -75,73 +23,224 @@ DB_PATH = Path(__file__).parent / "business.db"
 # Set this in Streamlit secrets.
 ACCESS_CODE = st.secrets.get("APP_ACCESS_CODE", "")
 
+
 # =========================================================
-# DESIGN
+# DESIGN - DARK THEME + ANTON FONT
 # =========================================================
 
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #f7f8fa;
-    }
 
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #e5e7eb;
-    }
+/* Import Anton font */
+@import url('https://fonts.googleapis.com/css2?family=Anton&display=swap');
 
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-        max-width: 1450px;
-    }
+/* Main application */
+.stApp {
+    background-color: #101114;
+    color: #FFFFFF;
+    font-family: 'Anton', sans-serif;
+}
 
-    h1, h2, h3 {
-        color: #172033;
-        font-weight: 650;
-    }
+/* Main content */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1450px;
+}
 
-    [data-testid="stMetric"] {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        padding: 18px;
-        border-radius: 12px;
-    }
+/* All text */
+html, body, [class*="css"],
+p, span, label, div {
+    font-family: 'Anton', sans-serif !important;
+    color: #FFFFFF;
+}
 
-    [data-testid="stMetricValue"] {
-        color: #172033;
-    }
+/* Headings */
+h1, h2, h3, h4, h5 {
+    font-family: 'Anton', sans-serif !important;
+    color: #FFFFFF !important;
+    letter-spacing: 0.5px;
+}
 
-    .stButton button {
-        border-radius: 8px;
-        font-weight: 600;
-        min-height: 42px;
-    }
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #18191E;
+    border-right: 1px solid #303138;
+}
 
-    .stTextInput input,
-    .stNumberInput input,
-    .stDateInput input,
-    .stSelectbox div[data-baseweb="select"] {
-        border-radius: 8px;
-    }
+[data-testid="stSidebar"] * {
+    color: #FFFFFF !important;
+}
 
-    div[data-testid="stForm"] {
-        background: white;
-        padding: 20px;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-    }
+/* Sidebar radio buttons */
+[data-testid="stSidebar"] label {
+    color: #FFFFFF !important;
+}
 
-    .subtext {
-        color: #687386;
-        font-size: 14px;
-    }
+/* Metric cards */
+[data-testid="stMetric"] {
+    background-color: #1C1D23;
+    border: 1px solid #303138;
+    padding: 20px;
+    border-radius: 12px;
+}
 
-    hr {
-        border-color: #e5e7eb;
-    }
+[data-testid="stMetricLabel"] {
+    color: #B9BBC5 !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: #FFFFFF !important;
+}
+
+/* Metric descriptions */
+[data-testid="stMetricDelta"] {
+    color: #B9BBC5 !important;
+}
+
+/* Input fields */
+.stTextInput input,
+.stNumberInput input,
+.stDateInput input,
+.stTextArea textarea {
+    background-color: #22232A !important;
+    color: #FFFFFF !important;
+    border: 1px solid #3B3C45 !important;
+    border-radius: 8px;
+}
+
+/* Input placeholders */
+input::placeholder,
+textarea::placeholder {
+    color: #858793 !important;
+}
+
+/* Select boxes */
+.stSelectbox div[data-baseweb="select"],
+.stMultiSelect div[data-baseweb="select"] {
+    background-color: #22232A !important;
+    color: #FFFFFF !important;
+}
+
+/* Dropdown menus */
+[data-baseweb="popover"],
+[data-baseweb="menu"],
+[data-baseweb="list"] {
+    background-color: #22232A !important;
+}
+
+[data-baseweb="menu"] * {
+    color: #FFFFFF !important;
+}
+
+/* Buttons */
+.stButton button,
+.stFormSubmitButton button {
+    background-color: #FFFFFF;
+    color: #101114 !important;
+    border: none;
+    border-radius: 8px;
+    font-family: 'Anton', sans-serif !important;
+    min-height: 42px;
+    transition: 0.2s ease;
+}
+
+.stButton button:hover,
+.stFormSubmitButton button:hover {
+    background-color: #D5D5D5;
+    color: #101114 !important;
+}
+
+/* Download buttons */
+.stDownloadButton button {
+    background-color: #FFFFFF;
+    color: #101114 !important;
+    border-radius: 8px;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    background-color: #18191E;
+    gap: 8px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background-color: #18191E;
+    color: #FFFFFF !important;
+}
+
+.stTabs [aria-selected="true"] {
+    border-bottom: 2px solid #FFFFFF !important;
+}
+
+/* Tables */
+[data-testid="stDataFrame"] {
+    background-color: #1C1D23;
+    border: 1px solid #303138;
+    border-radius: 10px;
+}
+
+/* Forms */
+div[data-testid="stForm"] {
+    background-color: #18191E;
+    border: 1px solid #303138;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+/* Dividers */
+hr {
+    border-color: #35363D !important;
+}
+
+/* Captions */
+.stCaption,
+[data-testid="stCaptionContainer"] {
+    color: #A5A6B0 !important;
+}
+
+/* Expanders */
+[data-testid="stExpander"] {
+    background-color: #18191E;
+    border: 1px solid #303138;
+    border-radius: 10px;
+}
+
+/* Alerts */
+[data-testid="stAlert"] {
+    background-color: #22232A;
+    border: 1px solid #3B3C45;
+    color: #FFFFFF;
+}
+
+/* Checkboxes */
+.stCheckbox label {
+    color: #FFFFFF !important;
+}
+
+/* Date picker */
+[data-baseweb="calendar"] {
+    background-color: #22232A !important;
+    color: #FFFFFF !important;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #101114;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #41424A;
+    border-radius: 10px;
+}
+
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # =========================================================
