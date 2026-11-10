@@ -1,4 +1,56 @@
+import streamlit as st
 
+st.markdown("""
+<style>
+
+/* Main background */
+.stApp {
+    background-color: #0E1117;
+    color: #F8FAFC;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #161B22;
+}
+
+/* Cards and containers */
+[data-testid="stMetric"] {
+    background-color: #1E293B;
+    padding: 20px;
+    border-radius: 12px;
+}
+
+/* Text */
+h1, h2, h3, p, label, span {
+    color: #F8FAFC;
+}
+
+/* Input fields */
+.stTextInput input,
+.stNumberInput input,
+.stSelectbox div[data-baseweb="select"] {
+    background-color: #1E293B;
+    color: white;
+    border-radius: 8px;
+}
+
+/* Buttons */
+.stButton button {
+    background-color: #6366F1;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 18px;
+}
+
+/* Dataframes */
+[data-testid="stDataFrame"] {
+    background-color: #1E293B;
+}
+
+</style>
+""", unsafe_allow_html=True)
 import streamlit as st
 import sqlite3
 import pandas as pd
