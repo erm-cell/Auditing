@@ -1,1431 +1,1344 @@
 
 import streamlit as st
+import sqlite3
 import pandas as pd
-
 from datetime import date, datetime
-from sqlalchemy import func
-
-from database import (
-    SessionLocal,
-    MoneyRecord,
-    Product,
-    StockMovement,
-)
-
+from pathlib import Path
+import hashlib
+import hmac
 
 # =========================================================
-# PAGE CONFIG
+# CONFIGURATION
 # =========================================================
 
 st.set_page_config(
     page_title="Business Tracker",
     page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-TODAY = date.today()
+DB_PATH = Path(__file__).parent / "business.db"
 
+# Set this in Streamlit secrets.
+ACCESS_CODE = st.secrets.get("APP_ACCESS_CODE", "")
 
 # =========================================================
-# DARK THEME AND CSS
+# DESIGN
 # =========================================================
 
-st.markdown(
-    """
-    <style>
+st.markdown("""
+<style>
     .stApp {
-        background-color: #090D16;
-        color: #F4F7FB;
+        background-color: #f7f8fa;
     }
 
     [data-testid="stSidebar"] {
-        background-color: #111A28;
-        border-right: 1px solid #263449;
+        background-color: #ffffff;
+        border-right: 1px solid #e5e7eb;
     }
 
-    [data-testid="stHeader"] {
-        background-color: #090D16;
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1450px;
     }
 
-    h1, h2, h3, h4, p, label, span {
-        color: #F4F7FB;
+    h1, h2, h3 {
+        color: #172033;
+        font-weight: 650;
     }
 
     [data-testid="stMetric"] {
-        background-color: #111A28;
-        border: 1px solid #263449;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        padding: 18px;
         border-radius: 12px;
-        padding: 16px;
     }
 
     [data-testid="stMetricValue"] {
-        color: #FFFFFF;
+        color: #172033;
     }
 
-    [data-testid="stMetricLabel"] {
-        color: #AAB8CA;
+    .stButton button {
+        border-radius: 8px;
+        font-weight: 600;
+        min-height: 42px;
     }
 
     .stTextInput input,
     .stNumberInput input,
     .stDateInput input,
-    .stTextArea textarea {
-        background-color: #111A28;
-        color: #FFFFFF;
-        border: 1px solid #34445C;
-    }
-
-    div[data-baseweb="select"] > div {
-        background-color: #111A28;
-        color: #FFFFFF;
-        border-color: #34445C;
-    }
-
-    .stButton button,
-    .stFormSubmitButton button {
-        background-color: #3478F6;
-        color: white;
-        border: none;
+    .stSelectbox div[data-baseweb="select"] {
         border-radius: 8px;
-        font-weight: 600;
     }
 
-    .stButton button:hover,
-    .stFormSubmitButton button:hover {
-        background-color: #2464D8;
-        color: white;
+    div[data-testid="stForm"] {
+        background: white;
+        padding: 20px;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
     }
 
-    [data-testid="stDataFrame"] {
-        border: 1px solid #263449;
-        border-radius: 10px;
+    .subtext {
+        color: #687386;
+        font-size: 14px;
     }
 
     hr {
-        border-color: #263449;
+        border-color: #e5e7eb;
     }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+</style>
+""", unsafe_allow_html=True)
 
 
 # =========================================================
-# HELPER FUNCTIONS
+# DATABASE
 # =========================================================
 
-def money(amount):
-    """Format a number as Indonesian Rupiah."""
-    try:
-        amount = float(amount or 0)
-    except (TypeError, ValueError):
-        amount = 0
-
-    return f"Rp {amount:,.0f}".replace(",", ".")
+def get_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
-def show_error(message):
-    st.error(message)
+def initialize_database():
+    with get_connection() as conn:
 
-
-def get_records():
-    db = SessionLocal()
-    try:
-        return (
-            db.query(MoneyRecord)
-            .order_by(
-                MoneyRecord.record_date.desc(),
-                MoneyRecord.id.desc(),
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
-            .all()
-        )
-    finally:
-        db.close()
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_date TEXT NOT NULL,
+                transaction_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK(amount > 0),
+                payment_method TEXT NOT NULL DEFAULT 'Cash',
+                notes TEXT DEFAULT ''
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                opening_quantity REAL NOT NULL DEFAULT 0,
+                opening_cost REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stock_movements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                movement_date TEXT NOT NULL,
+                movement_type TEXT NOT NULL,
+                quantity REAL NOT NULL CHECK(quantity > 0),
+                unit_cost REAL DEFAULT 0,
+                selling_price REAL DEFAULT 0,
+                notes TEXT DEFAULT '',
+                FOREIGN KEY(product_id) REFERENCES products(id)
+                    ON DELETE CASCADE
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS movement_calculations (
+                movement_id INTEGER PRIMARY KEY,
+                quantity_after REAL NOT NULL,
+                average_cost REAL NOT NULL,
+                cost_used REAL NOT NULL,
+                sales_value REAL NOT NULL,
+                FOREIGN KEY(movement_id) REFERENCES stock_movements(id)
+                    ON DELETE CASCADE
+            )
+        """)
+
+        conn.commit()
+
+
+# =========================================================
+# STARTING RECORDS
+# =========================================================
+
+STARTING_INCOME = [
+    ("08/11/2026", 28000),
+    ("01/11/2026", 8000),
+    ("01/11/2026", 8000),
+    ("01/11/2026", 38000),
+    ("01/11/2026", 5000),
+    ("01/11/2026", 16000),
+    ("01/11/2026", 7000),
+    ("01/11/2026", 12000),
+    ("01/11/2026", 16000),
+    ("01/11/2026", 8000),
+    ("01/11/2026", 8000),
+    ("01/11/2026", 16000),
+    ("01/11/2026", 10000),
+    ("01/11/2026", 40000),
+    ("26/10/2026", 15000),
+    ("26/10/2026", 15000),
+    ("26/10/2026", 16000),
+    ("24/10/2026", 8000),
+    ("24/10/2026", 14000),
+    ("21/10/2026", 17000),
+    ("20/10/2026", 18000),
+    ("20/10/2026", 10000),
+    ("18/10/2026", 38000),
+    ("18/10/2026", 6000),
+    ("16/10/2026", 38000),
+    ("14/10/2026", 38000),
+    ("13/10/2026", 16000),
+    ("12/10/2026", 24000),
+    ("12/10/2026", 24000),
+    ("09/10/2026", 214000),
+    ("09/10/2026", 24000),
+    ("09/10/2026", 8000),
+    ("09/10/2026", 8000),
+    ("08/10/2026", 18000),
+    ("08/10/2026", 46000),
+    ("08/10/2026", 38000),
+    ("08/10/2026", 42000),
+]
+
+
+def seed_starting_data():
+    with get_connection() as conn:
+
+        existing = conn.execute(
+            "SELECT value FROM settings WHERE key='initial_data_loaded'"
+        ).fetchone()
+
+        if existing:
+            return
+
+        # Starting cash is a balance, not business revenue.
+        conn.execute("""
+            INSERT INTO transactions
+            (transaction_date, transaction_type, description,
+             amount, payment_method, notes)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            "2026-11-08",
+            "Starting cash",
+            "Cash on hand",
+            238000,
+            "Cash",
+            "Initial cash balance"
+        ))
+
+        for transaction_date, amount in STARTING_INCOME:
+            parsed_date = datetime.strptime(
+                transaction_date, "%d/%m/%Y"
+            ).date().isoformat()
+
+            conn.execute("""
+                INSERT INTO transactions
+                (transaction_date, transaction_type, description,
+                 amount, payment_method, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                parsed_date,
+                "Income",
+                "Existing income",
+                amount,
+                "Cash",
+                ""
+            ))
+
+        conn.execute("""
+            INSERT INTO settings (key, value)
+            VALUES ('initial_data_loaded', 'yes')
+        """)
+
+        conn.commit()
+
+
+# =========================================================
+# GENERAL HELPERS
+# =========================================================
+
+def rupiah(value):
+    return "Rp" + f"{int(round(value)):,}".replace(",", ".")
+
+
+def display_date(value):
+    return datetime.strptime(
+        value, "%Y-%m-%d"
+    ).strftime("%d/%m/%Y")
+
+
+def get_transactions():
+    with get_connection() as conn:
+        return pd.read_sql_query("""
+            SELECT * FROM transactions
+            ORDER BY transaction_date DESC, id DESC
+        """, conn)
 
 
 def get_products():
-    db = SessionLocal()
-    try:
-        return (
-            db.query(Product)
-            .order_by(Product.name)
-            .all()
-        )
-    finally:
-        db.close()
+    with get_connection() as conn:
+        return pd.read_sql_query("""
+            SELECT * FROM products
+            ORDER BY name
+        """, conn)
 
 
 def get_movements():
-    db = SessionLocal()
-    try:
-        return (
-            db.query(StockMovement)
-            .order_by(
-                StockMovement.id.desc()
-            )
-            .all()
-        )
-    finally:
-        db.close()
-
-
-def records_to_dataframe(records):
-    rows = []
-
-    for record in records:
-        rows.append({
-            "ID": record.id,
-            "Type": record.record_type,
-            "Amount": record.amount,
-            "Category": record.category,
-            "Date": record.record_date,
-            "Description": record.description or "",
-        })
-
-    return pd.DataFrame(rows)
-
-
-def products_to_dataframe(products, movements):
-    rows = []
-
-    for product in products:
-        product_movements = [
-            movement
-            for movement in movements
-            if movement.product_id == product.id
-        ]
-
-        sold_quantity = sum(
-            movement.quantity
-            for movement in product_movements
-            if movement.kind == "Sale"
-        )
-
-        restocked_quantity = sum(
-            movement.quantity
-            for movement in product_movements
-            if movement.kind == "Restock"
-        )
-
-        used_quantity = sum(
-            movement.quantity
-            for movement in product_movements
-            if movement.kind in ["Used", "Damaged"]
-        )
-
-        opening_quantity = sum(
-            movement.quantity
-            for movement in product_movements
-            if movement.kind == "Initial stock"
-        )
-
-        rows.append({
-            "Product": product.name,
-            "Cost per item": product.unit_cost,
-            "Selling price": product.selling_price,
-            "Starting stock": opening_quantity,
-            "Restocked": restocked_quantity,
-            "Sold": sold_quantity,
-            "Used / Damaged": used_quantity,
-            "Remaining stock": product.stock,
-            "Sales value": sold_quantity * product.selling_price,
-        })
-
-    return pd.DataFrame(rows)
-
-
-def movement_to_dataframe(movements, products):
-    product_names = {
-        product.id: product.name
-        for product in products
-    }
-
-    rows = []
-
-    for movement in movements:
-        rows.append({
-            "Product": product_names.get(
-                movement.product_id,
-                "Unknown product",
-            ),
-            "Movement": movement.kind,
-            "Quantity": movement.quantity,
-            "Cost per item": movement.unit_cost,
-            "Date": movement.movement_date,
-            "Notes": movement.notes or "",
-        })
-
-    return pd.DataFrame(rows)
+    with get_connection() as conn:
+        return pd.read_sql_query("""
+            SELECT
+                m.*,
+                p.name AS product_name,
+                c.quantity_after,
+                c.average_cost,
+                c.cost_used,
+                c.sales_value
+            FROM stock_movements m
+            JOIN products p ON p.id = m.product_id
+            LEFT JOIN movement_calculations c
+                ON c.movement_id = m.id
+            ORDER BY m.movement_date DESC, m.id DESC
+        """, conn)
 
 
 # =========================================================
-# SIDEBAR NAVIGATION
+# STOCK CALCULATIONS
+# =========================================================
+
+def recalculate_product(product_id):
+    """
+    Rebuilds stock balances chronologically.
+
+    Uses weighted average cost.
+    This also makes deleting a previous movement safe.
+    """
+
+    with get_connection() as conn:
+
+        product = conn.execute("""
+            SELECT * FROM products WHERE id=?
+        """, (product_id,)).fetchone()
+
+        if not product:
+            return
+
+        quantity = float(product["opening_quantity"])
+        total_value = (
+            quantity * float(product["opening_cost"])
+        )
+
+        movements = conn.execute("""
+            SELECT * FROM stock_movements
+            WHERE product_id=?
+            ORDER BY movement_date ASC, id ASC
+        """, (product_id,)).fetchall()
+
+        for movement in movements:
+
+            movement_type = movement["movement_type"]
+            qty = float(movement["quantity"])
+
+            average_cost = (
+                total_value / quantity if quantity > 0 else 0
+            )
+
+            cost_used = 0
+            sales_value = 0
+
+            if movement_type == "Stock added":
+
+                incoming_cost = float(movement["unit_cost"])
+
+                quantity += qty
+                total_value += qty * incoming_cost
+
+                average_cost = (
+                    total_value / quantity if quantity > 0 else 0
+                )
+
+            elif movement_type in ("Sold", "Used / Damaged"):
+
+                if qty > quantity:
+                    raise ValueError(
+                        f"Insufficient stock for {product['name']}."
+                    )
+
+                cost_used = qty * average_cost
+
+                quantity -= qty
+                total_value -= cost_used
+
+                if quantity < 0.000001:
+                    quantity = 0
+                    total_value = 0
+
+                if movement_type == "Sold":
+                    sales_value = (
+                        qty * float(movement["selling_price"])
+                    )
+
+            conn.execute("""
+                INSERT OR REPLACE INTO movement_calculations
+                (movement_id, quantity_after, average_cost,
+                 cost_used, sales_value)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                movement["id"],
+                quantity,
+                average_cost,
+                cost_used,
+                sales_value
+            ))
+
+        conn.commit()
+
+
+def stock_summary():
+    products = get_products()
+    movements = get_movements()
+
+    total_quantity = 0
+    total_value = 0
+    total_used_cost = 0
+    total_sales_value = 0
+
+    for _, product in products.iterrows():
+
+        qty = float(product["opening_quantity"])
+        value = qty * float(product["opening_cost"])
+
+        product_movements = movements[
+            movements["product_id"] == product["id"]
+        ].copy()
+
+        product_movements = product_movements.sort_values(
+            ["movement_date", "id"]
+        )
+
+        for _, movement in product_movements.iterrows():
+
+            movement_qty = float(movement["quantity"])
+
+            if movement["movement_type"] == "Stock added":
+                qty += movement_qty
+                value += movement_qty * float(movement["unit_cost"])
+
+            else:
+                cost = float(movement["cost_used"] or 0)
+                qty -= movement_qty
+                value -= cost
+
+                total_used_cost += cost
+
+                total_sales_value += float(
+                    movement["sales_value"] or 0
+                )
+
+        total_quantity += qty
+        total_value += value
+
+    return (
+        total_quantity,
+        total_value,
+        total_used_cost,
+        total_sales_value
+    )
+
+
+# =========================================================
+# LOGIN
+# =========================================================
+
+if not ACCESS_CODE:
+    st.error(
+        "The app access code has not been configured. "
+        "Set APP_ACCESS_CODE in Streamlit secrets."
+    )
+    st.stop()
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+
+    st.markdown("# Business Tracker")
+    st.write("Enter your access code to continue.")
+
+    with st.form("login_form"):
+
+        entered_code = st.text_input(
+            "Access code",
+            type="password"
+        )
+
+        submitted = st.form_submit_button(
+            "Continue",
+            use_container_width=True
+        )
+
+        if submitted:
+            if hmac.compare_digest(
+                entered_code.encode("utf-8"),
+                ACCESS_CODE.encode("utf-8")
+            ):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect access code.")
+
+    st.stop()
+
+
+# =========================================================
+# START DATABASE
+# =========================================================
+
+initialize_database()
+seed_starting_data()
+
+
+# =========================================================
+# SIDEBAR
 # =========================================================
 
 st.sidebar.title("Business Tracker")
-st.sidebar.caption("Manage your business finances and stock.")
 
 page = st.sidebar.radio(
-    "Navigation",
+    "MENU",
     [
-        "Overview",
-        "Products & stock",
-        "Sales",
-        "Income & expenses",
-        "Download reports",
-    ],
+        "Dashboard",
+        "Income & Expenses",
+        "Products & Stock",
+        "Stock History",
+        "Transaction History",
+        "Data Backup"
+    ]
 )
 
 st.sidebar.divider()
-st.sidebar.caption("Business management dashboard")
+
+if st.sidebar.button("Log out", use_container_width=True):
+    st.session_state.authenticated = False
+    st.rerun()
 
 
 # =========================================================
-# OVERVIEW
+# DASHBOARD
 # =========================================================
 
-if page == "Overview":
+if page == "Dashboard":
 
-    st.title("Overview")
-    st.caption("Your business performance at a glance.")
+    st.title("Dashboard")
+    st.caption("Overview of your business finances and stock.")
 
-    records = get_records()
-    products = get_products()
-    movements = get_movements()
+    transactions = get_transactions()
 
-    current_month_records = [
-        record
-        for record in records
-        if record.record_date.year == TODAY.year
-        and record.record_date.month == TODAY.month
-    ]
+    income = transactions[
+        transactions["transaction_type"] == "Income"
+    ]["amount"].sum()
 
-    total_income = sum(
-        record.amount
-        for record in current_month_records
-        if record.record_type == "Income"
+    expenses = transactions[
+        transactions["transaction_type"] == "Expense"
+    ]["amount"].sum()
+
+    starting_cash = transactions[
+        transactions["transaction_type"] == "Starting cash"
+    ]["amount"].sum()
+
+    cash_balance = starting_cash + income - expenses
+
+    qty, stock_value, used_cost, sales_value = stock_summary()
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Income", rupiah(income))
+    col2.metric("Total Expenses", rupiah(expenses))
+    col3.metric("Cash Balance", rupiah(cash_balance))
+
+    col4, col5, col6 = st.columns(3)
+
+    col4.metric("Stock Value", rupiah(stock_value))
+    col5.metric("Stock Cost Used", rupiah(used_cost))
+    col6.metric("Recorded Stock Sales", rupiah(sales_value))
+
+    st.divider()
+
+    st.subheader("Financial Summary")
+
+    st.write(
+        "Cash balance = Starting cash + Income - Expenses"
     )
 
-    total_expenses = sum(
-        record.amount
-        for record in current_month_records
-        if record.record_type == "Expense"
-    )
-
-    profit = total_income - total_expenses
-
-    total_stock = sum(
-        product.stock
-        for product in products
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "Monthly income",
-        money(total_income),
-    )
-
-    col2.metric(
-        "Monthly expenses",
-        money(total_expenses),
-    )
-
-    col3.metric(
-        "Monthly balance",
-        money(profit),
-    )
-
-    col4.metric(
-        "Items in stock",
-        f"{total_stock:,}".replace(",", "."),
+    st.write(
+        f"**{rupiah(starting_cash)} + "
+        f"{rupiah(income)} - {rupiah(expenses)} "
+        f"= {rupiah(cash_balance)}**"
     )
 
     st.divider()
 
-    st.subheader("Recent transactions")
+    st.subheader("Recent Transactions")
 
-    if records:
-        recent = records[:10]
+    if not transactions.empty:
 
-        recent_df = records_to_dataframe(recent)
+        recent = transactions.head(10).copy()
 
-        recent_df["Amount"] = recent_df["Amount"].apply(money)
-
-        st.dataframe(
-            recent_df.drop(columns=["ID"]),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No income or expense records yet.")
-
-    st.divider()
-
-    st.subheader("Product stock")
-
-    if products:
-        inventory_df = products_to_dataframe(
-            products,
-            movements,
+        recent["Date"] = recent["transaction_date"].apply(
+            display_date
         )
 
+        recent["Amount"] = recent["amount"].apply(rupiah)
+
+        recent = recent.rename(columns={
+            "transaction_type": "Type",
+            "description": "Description",
+            "payment_method": "Payment"
+        })
+
         st.dataframe(
-            inventory_df[
-                [
-                    "Product",
-                    "Sold",
-                    "Remaining stock",
-                    "Sales value",
-                ]
+            recent[
+                ["Date", "Type", "Description", "Amount", "Payment"]
             ],
             use_container_width=True,
-            hide_index=True,
+            hide_index=True
         )
-    else:
-        st.info("Add your first product to start tracking stock.")
-
-
-# =========================================================
-# PRODUCTS AND STOCK
-# =========================================================
-
-elif page == "Products & stock":
-
-    st.title("Products & stock")
-    st.caption("Manage your products, prices, and inventory.")
-
-    products = get_products()
-    movements = get_movements()
-
-    tab1, tab2, tab3 = st.tabs([
-        "Product list",
-        "Add product",
-        "Manage stock",
-    ])
-
-    # -----------------------------------------------------
-    # PRODUCT LIST
-    # -----------------------------------------------------
-
-    with tab1:
-
-        st.subheader("Your products")
-
-        if products:
-            inventory_df = products_to_dataframe(
-                products,
-                movements,
-            )
-
-            display_df = inventory_df.copy()
-
-            display_df["Cost per item"] = (
-                display_df["Cost per item"].apply(money)
-            )
-
-            display_df["Selling price"] = (
-                display_df["Selling price"].apply(money)
-            )
-
-            display_df["Sales value"] = (
-                display_df["Sales value"].apply(money)
-            )
-
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.divider()
-
-            st.subheader("Edit product details")
-
-            product_map = {
-                product.id: product
-                for product in products
-            }
-
-            selected_id = st.selectbox(
-                "Select a product",
-                options=list(product_map.keys()),
-                format_func=lambda product_id: (
-                    product_map[product_id].name
-                ),
-            )
-
-            selected_product = product_map[selected_id]
-
-            with st.form("edit_product_form"):
-
-                new_name = st.text_input(
-                    "Product name",
-                    value=selected_product.name,
-                )
-
-                new_cost = st.number_input(
-                    "Cost per item (Rp)",
-                    min_value=0.0,
-                    value=float(selected_product.unit_cost),
-                    step=1000.0,
-                )
-
-                new_price = st.number_input(
-                    "Selling price per item (Rp)",
-                    min_value=0.0,
-                    value=float(selected_product.selling_price),
-                    step=1000.0,
-                )
-
-                update_product = st.form_submit_button(
-                    "Save product changes"
-                )
-
-                if update_product:
-
-                    if not new_name.strip():
-                        show_error("Product name cannot be empty.")
-
-                    else:
-                        db = SessionLocal()
-
-                        try:
-                            product = db.get(
-                                Product,
-                                selected_id,
-                            )
-
-                            product.name = new_name.strip()
-                            product.unit_cost = new_cost
-                            product.selling_price = new_price
-
-                            db.commit()
-
-                            st.success("Product updated successfully.")
-                            st.rerun()
-
-                        except Exception as error:
-                            db.rollback()
-                            show_error(str(error))
-
-                        finally:
-                            db.close()
-
-        else:
-            st.info("You have not added any products yet.")
-
-    # -----------------------------------------------------
-    # ADD PRODUCT
-    # -----------------------------------------------------
-
-    with tab2:
-
-        st.subheader("Add a new product")
-
-        with st.form("add_product_form"):
-
-            product_name = st.text_input("Product name")
-
-            unit_cost = st.number_input(
-                "Cost per item (Rp)",
-                min_value=0.0,
-                value=0.0,
-                step=1000.0,
-            )
-
-            selling_price = st.number_input(
-                "Selling price per item (Rp)",
-                min_value=0.0,
-                value=0.0,
-                step=1000.0,
-            )
-
-            starting_stock = st.number_input(
-                "Starting stock",
-                min_value=0,
-                value=0,
-                step=1,
-            )
-
-            add_product_button = st.form_submit_button(
-                "Add product"
-            )
-
-            if add_product_button:
-
-                if not product_name.strip():
-                    show_error("Please enter a product name.")
-
-                else:
-                    db = SessionLocal()
-
-                    try:
-                        existing = (
-                            db.query(Product)
-                            .filter(
-                                func.lower(Product.name)
-                                == product_name.strip().lower()
-                            )
-                            .first()
-                        )
-
-                        if existing:
-                            show_error(
-                                "A product with this name already exists."
-                            )
-
-                        else:
-                            product = Product(
-                                name=product_name.strip(),
-                                unit_cost=unit_cost,
-                                selling_price=selling_price,
-                                stock=starting_stock,
-                            )
-
-                            db.add(product)
-                            db.flush()
-
-                            if starting_stock > 0:
-                                movement = StockMovement(
-                                    product_id=product.id,
-                                    kind="Initial stock",
-                                    quantity=starting_stock,
-                                    unit_cost=unit_cost,
-                                    movement_date=TODAY,
-                                    notes="Starting stock",
-                                )
-
-                                db.add(movement)
-
-                            db.commit()
-
-                            st.success("Product added successfully.")
-                            st.rerun()
-
-                    except Exception as error:
-                        db.rollback()
-                        show_error(str(error))
-
-                    finally:
-                        db.close()
-
-    # -----------------------------------------------------
-    # MANAGE STOCK
-    # -----------------------------------------------------
-
-    with tab3:
-
-        st.subheader("Update stock")
-
-        if not products:
-            st.info("Add a product before managing stock.")
-
-        else:
-
-            product_map = {
-                product.id: product
-                for product in products
-            }
-
-            selected_id = st.selectbox(
-                "Choose product",
-                options=list(product_map.keys()),
-                format_func=lambda product_id: (
-                    product_map[product_id].name
-                ),
-                key="stock_product",
-            )
-
-            selected_product = product_map[selected_id]
-
-            st.metric(
-                "Current stock",
-                selected_product.stock,
-            )
-
-            stock_action = st.radio(
-                "Stock action",
-                [
-                    "Restock",
-                    "Used",
-                    "Damaged",
-                ],
-                horizontal=True,
-            )
-
-            with st.form("stock_update_form"):
-
-                quantity = st.number_input(
-                    "Quantity",
-                    min_value=1,
-                    value=1,
-                    step=1,
-                )
-
-                if stock_action == "Restock":
-
-                    restock_cost = st.number_input(
-                        "Cost per item (Rp)",
-                        min_value=0.0,
-                        value=float(selected_product.unit_cost),
-                        step=1000.0,
-                    )
-
-                else:
-                    restock_cost = float(
-                        selected_product.unit_cost
-                    )
-
-                stock_notes = st.text_input(
-                    "Notes (optional)"
-                )
-
-                update_stock_button = st.form_submit_button(
-                    "Update stock"
-                )
-
-                if update_stock_button:
-
-                    db = SessionLocal()
-
-                    try:
-                        product = db.get(
-                            Product,
-                            selected_id,
-                        )
-
-                        if (
-                            stock_action != "Restock"
-                            and quantity > product.stock
-                        ):
-                            show_error(
-                                "Quantity cannot be greater than current stock."
-                            )
-
-                        else:
-
-                            if stock_action == "Restock":
-
-                                old_stock = product.stock
-                                new_stock = old_stock + quantity
-
-                                if new_stock > 0:
-                                    product.unit_cost = (
-                                        (
-                                            old_stock * product.unit_cost
-                                            + quantity * restock_cost
-                                        )
-                                        / new_stock
-                                    )
-
-                                product.stock = new_stock
-
-                            else:
-                                product.stock -= quantity
-
-                            movement = StockMovement(
-                                product_id=selected_id,
-                                kind=stock_action,
-                                quantity=quantity,
-                                unit_cost=restock_cost,
-                                movement_date=TODAY,
-                                notes=stock_notes,
-                            )
-
-                            db.add(movement)
-
-                            # A restock is recorded as a cash expense.
-                            # Used and damaged stock are tracked as
-                            # inventory movements, not additional expenses.
-
-                            if stock_action == "Restock":
-                                expense = MoneyRecord(
-                                    record_type="Expense",
-                                    amount=quantity * restock_cost,
-                                    category="Stock purchase",
-                                    record_date=TODAY,
-                                    description=(
-                                        f"Restocked {quantity} "
-                                        f"x {product.name}"
-                                    ),
-                                )
-
-                                db.add(expense)
-
-                            db.commit()
-
-                            st.success(
-                                f"{stock_action} stock updated successfully."
-                            )
-
-                            st.rerun()
-
-                    except Exception as error:
-                        db.rollback()
-                        show_error(str(error))
-
-                    finally:
-                        db.close()
-
-        st.divider()
-
-        st.subheader("Stock movement history")
-
-        if movements:
-
-            movement_df = movement_to_dataframe(
-                movements,
-                products,
-            )
-
-            movement_df["Cost per item"] = (
-                movement_df["Cost per item"].apply(money)
-            )
-
-            st.dataframe(
-                movement_df,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-            st.info("No stock movements recorded yet.")
-
-
-# =========================================================
-# SALES
-# =========================================================
-
-elif page == "Sales":
-
-    st.title("Sales")
-    st.caption("Record sales and track the value of your products sold.")
-
-    products = get_products()
-    movements = get_movements()
-
-    if not products:
-        st.info("Add a product before recording a sale.")
-
-    else:
-
-        product_map = {
-            product.id: product
-            for product in products
-        }
-
-        st.subheader("Record a sale")
-
-        selected_id = st.selectbox(
-            "Select product",
-            options=list(product_map.keys()),
-            format_func=lambda product_id: (
-                f"{product_map[product_id].name} "
-                f"— Stock: {product_map[product_id].stock}"
-            ),
-        )
-
-        selected_product = product_map[selected_id]
-
-        st.write(
-            f"**Selling price:** {money(selected_product.selling_price)}"
-        )
-
-        st.write(
-            f"**Available stock:** {selected_product.stock}"
-        )
-
-        with st.form("record_sale_form"):
-
-            sale_quantity = st.number_input(
-                "Quantity sold",
-                min_value=1,
-                value=1,
-                step=1,
-            )
-
-            sale_date = st.date_input(
-                "Sale date",
-                value=TODAY,
-            )
-
-            sale_description = st.text_input(
-                "Notes (optional)"
-            )
-
-            sale_button = st.form_submit_button(
-                "Record sale"
-            )
-
-            if sale_button:
-
-                db = SessionLocal()
-
-                try:
-                    product = db.get(
-                        Product,
-                        selected_id,
-                    )
-
-                    if sale_quantity > product.stock:
-                        show_error(
-                            "Not enough stock available."
-                        )
-
-                    else:
-
-                        sale_value = (
-                            sale_quantity
-                            * product.selling_price
-                        )
-
-                        product.stock -= sale_quantity
-
-                        movement = StockMovement(
-                            product_id=selected_id,
-                            kind="Sale",
-                            quantity=sale_quantity,
-                            unit_cost=product.unit_cost,
-                            movement_date=sale_date,
-                            notes=sale_description,
-                        )
-
-                        income = MoneyRecord(
-                            record_type="Income",
-                            amount=sale_value,
-                            category="Sales",
-                            record_date=sale_date,
-                            description=(
-                                f"{sale_quantity} x {product.name}"
-                                + (
-                                    f" - {sale_description}"
-                                    if sale_description.strip()
-                                    else ""
-                                )
-                            ),
-                        )
-
-                        db.add(movement)
-                        db.add(income)
-
-                        db.commit()
-
-                        st.success(
-                            f"Sale recorded. Total: {money(sale_value)}"
-                        )
-
-                        st.rerun()
-
-                except Exception as error:
-                    db.rollback()
-                    show_error(str(error))
-
-                finally:
-                    db.close()
-
-    st.divider()
-
-    st.subheader("Sales history")
-
-    sales_movements = [
-        movement
-        for movement in movements
-        if movement.kind == "Sale"
-    ]
-
-    if sales_movements:
-
-        product_names = {
-            product.id: product.name
-            for product in products
-        }
-
-        sales_rows = []
-
-        for movement in sales_movements:
-
-            product = next(
-                (
-                    item
-                    for item in products
-                    if item.id == movement.product_id
-                ),
-                None,
-            )
-
-            if product is None:
-                continue
-
-            sales_rows.append({
-                "Product": product_names.get(
-                    movement.product_id,
-                    "Unknown product",
-                ),
-                "Quantity sold": movement.quantity,
-                "Date": movement.movement_date,
-                "Cost used": money(
-                    movement.quantity * movement.unit_cost
-                ),
-                "Notes": movement.notes or "",
-            })
-
-        sales_df = pd.DataFrame(sales_rows)
-
-        st.dataframe(
-            sales_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        total_sold = sum(
-            movement.quantity
-            for movement in sales_movements
-        )
-
-        total_cost = sum(
-            movement.quantity * movement.unit_cost
-            for movement in sales_movements
-        )
-
-        col1, col2 = st.columns(2)
-
-        col1.metric(
-            "Total items sold",
-            total_sold,
-        )
-
-        col2.metric(
-            "Recorded cost of sold stock",
-            money(total_cost),
-        )
-
-    else:
-        st.info("No sales recorded yet.")
-
-
-# =========================================================
-# INCOME AND EXPENSES
-# =========================================================
-
-elif page == "Income & expenses":
-
-    st.title("Income & expenses")
-    st.caption("Track your business money and correct existing entries.")
-
-    records = get_records()
-
-    # -----------------------------------------------------
-    # ADD NEW RECORD
-    # -----------------------------------------------------
-
-    st.subheader("Add a transaction")
-
-    with st.form("add_money_record_form"):
-
-        record_type = st.selectbox(
-            "Transaction type",
-            [
-                "Income",
-                "Expense",
-            ],
-        )
-
-        amount = st.number_input(
-            "Amount (Rp)",
-            min_value=0.0,
-            value=0.0,
-            step=1000.0,
-        )
-
-        category = st.text_input(
-            "Category",
-            placeholder="Example: Sales, Rent, Supplies",
-        )
-
-        record_date = st.date_input(
-            "Date",
-            value=TODAY,
-        )
-
-        description = st.text_input(
-            "Description (optional)",
-        )
-
-        add_record_button = st.form_submit_button(
-            "Add transaction"
-        )
-
-        if add_record_button:
-
-            if amount <= 0:
-                show_error("Amount must be greater than zero.")
-
-            elif not category.strip():
-                show_error("Please enter a category.")
-
-            else:
-                db = SessionLocal()
-
-                try:
-                    new_record = MoneyRecord(
-                        record_type=record_type,
-                        amount=amount,
-                        category=category.strip(),
-                        record_date=record_date,
-                        description=description.strip(),
-                    )
-
-                    db.add(new_record)
-                    db.commit()
-
-                    st.success("Transaction added successfully.")
-                    st.rerun()
-
-                except Exception as error:
-                    db.rollback()
-                    show_error(str(error))
-
-                finally:
-                    db.close()
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # FILTER RECORDS
-    # -----------------------------------------------------
-
-    st.subheader("Transaction history")
-
-    records = get_records()
-
-    if records:
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            filter_type = st.selectbox(
-                "Filter by type",
-                [
-                    "All",
-                    "Income",
-                    "Expense",
-                ],
-            )
-
-        with col2:
-            filter_month = st.selectbox(
-                "Filter by month",
-                ["All"] + [
-                    f"{year}-{month:02d}"
-                    for year, month in sorted(
-                        {
-                            (
-                                record.record_date.year,
-                                record.record_date.month,
-                            )
-                            for record in records
-                        },
-                        reverse=True,
-                    )
-                ],
-            )
-
-        filtered = records
-
-        if filter_type != "All":
-            filtered = [
-                record
-                for record in filtered
-                if record.record_type == filter_type
-            ]
-
-        if filter_month != "All":
-            year, month = map(
-                int,
-                filter_month.split("-"),
-            )
-
-            filtered = [
-                record
-                for record in filtered
-                if (
-                    record.record_date.year == year
-                    and record.record_date.month == month
-                )
-            ]
-
-        if filtered:
-
-            table_df = records_to_dataframe(filtered)
-
-            table_df["Amount"] = (
-                table_df["Amount"].apply(money)
-            )
-
-            st.dataframe(
-                table_df.drop(columns=["ID"]),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            income_total = sum(
-                record.amount
-                for record in filtered
-                if record.record_type == "Income"
-            )
-
-            expense_total = sum(
-                record.amount
-                for record in filtered
-                if record.record_type == "Expense"
-            )
-
-            col1, col2, col3 = st.columns(3)
-
-            col1.metric(
-                "Income",
-                money(income_total),
-            )
-
-            col2.metric(
-                "Expenses",
-                money(expense_total),
-            )
-
-            col3.metric(
-                "Balance",
-                money(income_total - expense_total),
-            )
-
-            st.divider()
-
-            # -------------------------------------------------
-            # EDIT EXISTING RECORD
-            # -------------------------------------------------
-
-            st.subheader("Edit an existing transaction")
-
-            st.caption(
-                "Choose a transaction to correct it. "
-                "Saving changes updates the original record "
-                "instead of creating another one."
-            )
-
-            record_map = {
-                record.id: record
-                for record in filtered
-            }
-
-            selected_record_id = st.selectbox(
-                "Choose transaction",
-                options=list(record_map.keys()),
-                format_func=lambda record_id: (
-                    f"#{record_id} | "
-                    f"{record_map[record_id].record_type} | "
-                    f"{money(record_map[record_id].amount)} | "
-                    f"{record_map[record_id].category} | "
-                    f"{record_map[record_id].record_date}"
-                ),
-            )
-
-            selected_record = record_map[
-                selected_record_id
-            ]
-
-            with st.form("edit_money_record_form"):
-
-                edited_type = st.selectbox(
-                    "Transaction type",
-                    [
-                        "Income",
-                        "Expense",
-                    ],
-                    index=(
-                        0
-                        if selected_record.record_type == "Income"
-                        else 1
-                    ),
-                )
-
-                edited_amount = st.number_input(
-                    "Amount (Rp)",
-                    min_value=0.0,
-                    value=float(selected_record.amount),
-                    step=1000.0,
-                )
-
-                edited_category = st.text_input(
-                    "Category",
-                    value=selected_record.category or "",
-                )
-
-                edited_date = st.date_input(
-                    "Date",
-                    value=selected_record.record_date,
-                )
-
-                edited_description = st.text_input(
-                    "Description",
-                    value=selected_record.description or "",
-                )
-
-                save_changes = st.form_submit_button(
-                    "Save changes"
-                )
-
-                if save_changes:
-
-                    if edited_amount <= 0:
-                        show_error(
-                            "Amount must be greater than zero."
-                        )
-
-                    elif not edited_category.strip():
-                        show_error(
-                            "Please enter a category."
-                        )
-
-                    else:
-                        db = SessionLocal()
-
-                        try:
-                            existing_record = db.get(
-                                MoneyRecord,
-                                selected_record_id,
-                            )
-
-                            if existing_record is None:
-                                show_error(
-                                    "This transaction could not be found."
-                                )
-
-                            else:
-                                existing_record.record_type = (
-                                    edited_type
-                                )
-
-                                existing_record.amount = (
-                                    edited_amount
-                                )
-
-                                existing_record.category = (
-                                    edited_category.strip()
-                                )
-
-                                existing_record.record_date = (
-                                    edited_date
-                                )
-
-                                existing_record.description = (
-                                    edited_description.strip()
-                                )
-
-                                db.commit()
-
-                                st.success(
-                                    "Transaction updated successfully. "
-                                    "No duplicate was created."
-                                )
-
-                                st.rerun()
-
-                        except Exception as error:
-                            db.rollback()
-                            show_error(str(error))
-
-                        finally:
-                            db.close()
-
-        else:
-            st.info("No transactions match your filters.")
 
     else:
         st.info("No transactions recorded yet.")
 
 
 # =========================================================
-# DOWNLOAD REPORTS
+# INCOME AND EXPENSES
 # =========================================================
 
-elif page == "Download reports":
+elif page == "Income & Expenses":
 
-    st.title("Download reports")
-    st.caption("Export your business records as CSV files.")
+    st.title("Income & Expenses")
+    st.caption("Record money received and money spent.")
 
-    records = get_records()
+    tab1, tab2 = st.tabs([
+        "Add Transaction",
+        "Edit Transaction"
+    ])
+
+    with tab1:
+
+        with st.form("add_transaction"):
+
+            transaction_type = st.selectbox(
+                "Transaction type",
+                ["Income", "Expense"]
+            )
+
+            description = st.text_input(
+                "Description",
+                placeholder="Example: Product sales, electricity"
+            )
+
+            amount = st.number_input(
+                "Amount (Rp)",
+                min_value=1,
+                step=1000
+            )
+
+            transaction_date = st.date_input(
+                "Date",
+                value=date.today(),
+                format="DD/MM/YYYY"
+            )
+
+            payment = st.selectbox(
+                "Payment method",
+                ["Cash", "Bank transfer", "E-wallet", "Other"]
+            )
+
+            notes = st.text_input("Notes (optional)")
+
+            submit = st.form_submit_button(
+                "Save Transaction",
+                use_container_width=True
+            )
+
+            if submit:
+
+                if not description.strip():
+                    st.error("Please enter a description.")
+
+                else:
+
+                    with get_connection() as conn:
+
+                        conn.execute("""
+                            INSERT INTO transactions
+                            (transaction_date, transaction_type,
+                             description, amount, payment_method, notes)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            transaction_date.isoformat(),
+                            transaction_type,
+                            description.strip(),
+                            int(amount),
+                            payment,
+                            notes.strip()
+                        ))
+
+                        conn.commit()
+
+                    st.success("Transaction saved.")
+                    st.rerun()
+
+    with tab2:
+
+        transactions = get_transactions()
+
+        if transactions.empty:
+            st.info("There are no transactions to edit.")
+
+        else:
+
+            options = {
+                f"#{row['id']} | {display_date(row['transaction_date'])} "
+                f"| {row['transaction_type']} "
+                f"| {row['description']} "
+                f"| {rupiah(row['amount'])}": row["id"]
+                for _, row in transactions.iterrows()
+            }
+
+            selected_label = st.selectbox(
+                "Choose a transaction",
+                list(options.keys())
+            )
+
+            selected_id = options[selected_label]
+
+            selected = transactions[
+                transactions["id"] == selected_id
+            ].iloc[0]
+
+            with st.form("edit_transaction"):
+
+                new_type = st.selectbox(
+                    "Transaction type",
+                    ["Income", "Expense", "Starting cash"],
+                    index=[
+                        "Income", "Expense", "Starting cash"
+                    ].index(selected["transaction_type"])
+                )
+
+                new_description = st.text_input(
+                    "Description",
+                    value=selected["description"]
+                )
+
+                new_amount = st.number_input(
+                    "Amount (Rp)",
+                    min_value=1,
+                    value=int(selected["amount"]),
+                    step=1000
+                )
+
+                new_date = st.date_input(
+                    "Date",
+                    value=datetime.strptime(
+                        selected["transaction_date"],
+                        "%Y-%m-%d"
+                    ).date(),
+                    format="DD/MM/YYYY"
+                )
+
+                new_payment = st.selectbox(
+                    "Payment method",
+                    ["Cash", "Bank transfer", "E-wallet", "Other"],
+                    index=[
+                        "Cash", "Bank transfer", "E-wallet", "Other"
+                    ].index(selected["payment_method"])
+                )
+
+                new_notes = st.text_input(
+                    "Notes",
+                    value=selected["notes"] or ""
+                )
+
+                save_changes = st.form_submit_button(
+                    "Save Changes",
+                    use_container_width=True
+                )
+
+                if save_changes:
+
+                    if not new_description.strip():
+                        st.error("Please enter a description.")
+
+                    else:
+
+                        with get_connection() as conn:
+
+                            conn.execute("""
+                                UPDATE transactions
+                                SET transaction_date=?,
+                                    transaction_type=?,
+                                    description=?,
+                                    amount=?,
+                                    payment_method=?,
+                                    notes=?
+                                WHERE id=?
+                            """, (
+                                new_date.isoformat(),
+                                new_type,
+                                new_description.strip(),
+                                int(new_amount),
+                                new_payment,
+                                new_notes.strip(),
+                                selected_id
+                            ))
+
+                            conn.commit()
+
+                        st.success("Transaction updated.")
+                        st.rerun()
+
+            if st.button(
+                "Delete this transaction",
+                type="secondary"
+            ):
+
+                st.session_state.confirm_delete_transaction = selected_id
+
+            if st.session_state.get(
+                "confirm_delete_transaction"
+            ) == selected_id:
+
+                st.warning(
+                    "Are you sure you want to permanently delete this transaction?"
+                )
+
+                yes, no = st.columns(2)
+
+                if yes.button("Confirm Delete", type="primary"):
+                    with get_connection() as conn:
+                        conn.execute(
+                            "DELETE FROM transactions WHERE id=?",
+                            (selected_id,)
+                        )
+                        conn.commit()
+
+                    del st.session_state[
+                        "confirm_delete_transaction"
+                    ]
+                    st.rerun()
+
+                if no.button("Cancel"):
+                    del st.session_state[
+                        "confirm_delete_transaction"
+                    ]
+                    st.rerun()
+
+
+# =========================================================
+# PRODUCTS AND STOCK
+# =========================================================
+
+elif page == "Products & Stock":
+
+    st.title("Products & Stock")
+
+    st.caption(
+        "Track the products you own, how much stock remains, "
+        "and how much stock has been used or sold."
+    )
+
+    tab1, tab2, tab3 = st.tabs([
+        "Stock Overview",
+        "Add Product",
+        "Update Stock"
+    ])
+
     products = get_products()
     movements = get_movements()
 
-    st.subheader("Income and expenses")
+    with tab1:
 
-    if records:
+        if products.empty:
+            st.info("Add your first product to start tracking stock.")
 
-        money_df = records_to_dataframe(records)
+        else:
 
-        csv_money = money_df.to_csv(
-            index=False
-        ).encode("utf-8-sig")
+            overview = []
 
-        st.download_button(
-            label="Download income and expenses",
-            data=csv_money,
-            file_name="income_expenses.csv",
-            mime="text/csv",
-        )
+            for _, product in products.iterrows():
+
+                qty = float(product["opening_quantity"])
+                value = qty * float(product["opening_cost"])
+
+                product_movements = movements[
+                    movements["product_id"] == product["id"]
+                ].sort_values(["movement_date", "id"])
+
+                used = 0
+                sold_qty = 0
+                sold_value = 0
+
+                for _, movement in product_movements.iterrows():
+
+                    mqty = float(movement["quantity"])
+
+                    if movement["movement_type"] == "Stock added":
+                        qty += mqty
+                        value += mqty * float(movement["unit_cost"])
+
+                    else:
+                        qty -= mqty
+                        value -= float(movement["cost_used"] or 0)
+                        used += mqty
+
+                        if movement["movement_type"] == "Sold":
+                            sold_qty += mqty
+                            sold_value += float(
+                                movement["sales_value"] or 0
+                            )
+
+                average_cost = value / qty if qty > 0 else 0
+
+                overview.append({
+                    "Product": product["name"],
+                    "Original Stock": product["opening_quantity"],
+                    "Stock Used / Sold": used,
+                    "Remaining Stock": round(qty, 3),
+                    "Average Cost": rupiah(average_cost),
+                    "Remaining Stock Value": rupiah(value),
+                    "Sales Value": rupiah(sold_value)
+                })
+
+            st.dataframe(
+                pd.DataFrame(overview),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.divider()
+
+            st.subheader("Product Details")
+
+            product_options = {
+                f"{row['name']} (ID {row['id']})": row["id"]
+                for _, row in products.iterrows()
+            }
+
+            chosen = st.selectbox(
+                "Choose product",
+                list(product_options.keys()),
+                key="product_details"
+            )
+
+            product_id = product_options[chosen]
+
+            product = products[
+                products["id"] == product_id
+            ].iloc[0]
+
+            if st.button("Delete Product", type="secondary"):
+
+                st.session_state.confirm_delete_product = product_id
+
+            if st.session_state.get(
+                "confirm_delete_product"
+            ) == product_id:
+
+                st.warning(
+                    "Deleting this product will also delete all its stock history."
+                )
+
+                yes, no = st.columns(2)
+
+                if yes.button("Confirm Product Deletion"):
+                    with get_connection() as conn:
+                        conn.execute(
+                            "DELETE FROM products WHERE id=?",
+                            (product_id,)
+                        )
+                        conn.commit()
+
+                    del st.session_state["confirm_delete_product"]
+                    st.rerun()
+
+                if no.button("Cancel"):
+                    del st.session_state["confirm_delete_product"]
+                    st.rerun()
+
+    with tab2:
+
+        with st.form("add_product"):
+
+            product_name = st.text_input(
+                "Product name",
+                placeholder="Example: Coffee"
+            )
+
+            opening_quantity = st.number_input(
+                "Original stock quantity",
+                min_value=0.0,
+                step=1.0
+            )
+
+            opening_cost = st.number_input(
+                "Cost per unit (Rp)",
+                min_value=0.0,
+                step=1000.0
+            )
+
+            add_product = st.form_submit_button(
+                "Add Product",
+                use_container_width=True
+            )
+
+            if add_product:
+
+                if not product_name.strip():
+                    st.error("Please enter a product name.")
+
+                else:
+
+                    with get_connection() as conn:
+
+                        existing = conn.execute("""
+                            SELECT id FROM products
+                            WHERE LOWER(name)=LOWER(?)
+                        """, (product_name.strip(),)).fetchone()
+
+                        if existing:
+                            st.error(
+                                "This product already exists. "
+                                "Update its stock instead."
+                            )
+
+                        else:
+
+                            conn.execute("""
+                                INSERT INTO products
+                                (name, opening_quantity, opening_cost, created_at)
+                                VALUES (?, ?, ?, ?)
+                            """, (
+                                product_name.strip(),
+                                opening_quantity,
+                                opening_cost,
+                                datetime.now().isoformat()
+                            ))
+
+                            conn.commit()
+
+                            st.success("Product added.")
+                            st.rerun()
+
+    with tab3:
+
+        if products.empty:
+            st.info("Add a product before updating stock.")
+
+        else:
+
+            product_options = {
+                row["name"]: row["id"]
+                for _, row in products.iterrows()
+            }
+
+            with st.form("stock_movement"):
+
+                selected_product = st.selectbox(
+                    "Product",
+                    list(product_options.keys())
+                )
+
+                movement_type = st.selectbox(
+                    "What happened to the stock?",
+                    [
+                        "Stock added",
+                        "Sold",
+                        "Used / Damaged"
+                    ]
+                )
+
+                movement_quantity = st.number_input(
+                    "Quantity",
+                    min_value=0.001,
+                    step=1.0
+                )
+
+                if movement_type == "Stock added":
+
+                    unit_cost = st.number_input(
+                        "Purchase cost per unit (Rp)",
+                        min_value=0.0,
+                        step=1000.0
+                    )
+
+                    selling_price = 0.0
+
+                elif movement_type == "Sold":
+
+                    unit_cost = 0.0
+
+                    selling_price = st.number_input(
+                        "Selling price per unit (Rp)",
+                        min_value=0.0,
+                        step=1000.0
+                    )
+
+                else:
+
+                    unit_cost = 0.0
+                    selling_price = 0.0
+
+                movement_date = st.date_input(
+                    "Date",
+                    value=date.today(),
+                    format="DD/MM/YYYY"
+                )
+
+                movement_notes = st.text_input(
+                    "Notes (optional)"
+                )
+
+                save_movement = st.form_submit_button(
+                    "Save Stock Update",
+                    use_container_width=True
+                )
+
+                if save_movement:
+
+                    product_id = product_options[selected_product]
+
+                    with get_connection() as conn:
+
+                        conn.execute("""
+                            INSERT INTO stock_movements
+                            (product_id, movement_date, movement_type,
+                             quantity, unit_cost, selling_price, notes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            product_id,
+                            movement_date.isoformat(),
+                            movement_type,
+                            movement_quantity,
+                            unit_cost,
+                            selling_price,
+                            movement_notes.strip()
+                        ))
+
+                        movement_id = conn.execute(
+                            "SELECT last_insert_rowid()"
+                        ).fetchone()[0]
+
+                        conn.commit()
+
+                    try:
+
+                        recalculate_product(product_id)
+
+                        st.success("Stock updated successfully.")
+                        st.rerun()
+
+                    except ValueError as error:
+
+                        with get_connection() as conn:
+                            conn.execute(
+                                "DELETE FROM stock_movements WHERE id=?",
+                                (movement_id,)
+                            )
+                            conn.commit()
+
+                        recalculate_product(product_id)
+                        st.error(str(error))
+
+
+# =========================================================
+# STOCK HISTORY
+# =========================================================
+
+elif page == "Stock History":
+
+    st.title("Stock History")
+    st.caption("Review every stock increase, sale and usage.")
+
+    movements = get_movements()
+
+    if movements.empty:
+
+        st.info("No stock movements recorded.")
 
     else:
-        st.info("No financial records to export.")
+
+        display = movements.copy()
+
+        display["Date"] = display["movement_date"].apply(
+            display_date
+        )
+
+        display["Cost Used"] = display["cost_used"].apply(
+            lambda x: rupiah(x or 0)
+        )
+
+        display["Sales Value"] = display["sales_value"].apply(
+            lambda x: rupiah(x or 0)
+        )
+
+        display["Purchase Cost"] = display.apply(
+            lambda row: (
+                rupiah(row["quantity"] * row["unit_cost"])
+                if row["movement_type"] == "Stock added"
+                else "-"
+            ),
+            axis=1
+        )
+
+        display = display.rename(columns={
+            "product_name": "Product",
+            "movement_type": "Movement",
+            "quantity": "Quantity",
+            "notes": "Notes"
+        })
+
+        st.dataframe(
+            display[
+                [
+                    "Date", "Product", "Movement",
+                    "Quantity", "Purchase Cost",
+                    "Cost Used", "Sales Value", "Notes"
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.divider()
+
+        st.subheader("Correct a Stock Update")
+
+        movement_options = {
+            f"#{row['id']} | {row['product_name']} | "
+            f"{display_date(row['movement_date'])} | "
+            f"{row['movement_type']} | {row['quantity']}": (
+                row["id"], row["product_id"]
+            )
+            for _, row in movements.iterrows()
+        }
+
+        selected_movement = st.selectbox(
+            "Choose the incorrect stock update",
+            list(movement_options.keys())
+        )
+
+        movement_id, product_id = movement_options[
+            selected_movement
+        ]
+
+        if st.button("Delete Stock Update", type="secondary"):
+
+            st.session_state.confirm_delete_movement = (
+                movement_id, product_id
+            )
+
+        if st.session_state.get(
+            "confirm_delete_movement"
+        ) == (movement_id, product_id):
+
+            st.warning(
+                "This will remove the stock update and recalculate "
+                "the product's stock history."
+            )
+
+            yes, no = st.columns(2)
+
+            if yes.button("Confirm Deletion"):
+
+                with get_connection() as conn:
+                    conn.execute(
+                        "DELETE FROM stock_movements WHERE id=?",
+                        (movement_id,)
+                    )
+                    conn.commit()
+
+                recalculate_product(product_id)
+
+                del st.session_state["confirm_delete_movement"]
+                st.rerun()
+
+            if no.button("Cancel"):
+                del st.session_state["confirm_delete_movement"]
+                st.rerun()
+
+
+# =========================================================
+# DATA BACKUP
+# =========================================================
+
+elif page == "Data Backup":
+
+    st.title("Data Backup")
+
+    st.caption(
+        "Save a copy of your business records or restore them later."
+    )
+
+    transactions = get_transactions()
+    products = get_products()
+    movements = get_movements()
+
+    st.subheader("Download your records")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.download_button(
+            "Download Transactions",
+            transactions.to_csv(index=False).encode("utf-8-sig"),
+            file_name="transactions.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    with col2:
+
+        st.download_button(
+            "Download Products",
+            products.to_csv(index=False).encode("utf-8-sig"),
+            file_name="products.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    with col3:
+
+        st.download_button(
+            "Download Stock History",
+            movements.to_csv(index=False).encode("utf-8-sig"),
+            file_name="stock_history.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
     st.divider()
 
-    st.subheader("Product inventory")
+    st.subheader("Database information")
 
-    if products:
+    st.write(
+        "Your records are stored in a SQLite database named "
+        "`business.db`."
+    )
 
-        inventory_df = products_to_dataframe(
-            products,
-            movements,
-        )
+    st.info(
+        "Download your records regularly. If you host this app "
+        "on a service with temporary storage, use a persistent "
+        "database or keep backups outside the app."
+    )
 
-        csv_inventory = inventory_df.to_csv(
-            index=False
-        ).encode("utf-8-sig")
-
-        st.download_button(
-            label="Download product inventory",
-            data=csv_inventory,
-            file_name="product_inventory.csv",
-            mime="text/csv",
-        )
-
-    else:
-        st.info("No products to export.")
-
-    st.divider()
-
-    st.subheader("Stock movement history")
-
-    if movements:
-
-        movement_df = movement_to_dataframe(
-            movements,
-            products,
-        )
-
-        csv_movements = movement_df.to_csv(
-            index=False
-        ).encode("utf-8-sig")
-
-        st.download_button(
-            label="Download stock movements",
-            data=csv_movements,
-            file_name="stock_movements.csv",
-            mime="text/csv",
-        )
-
-    else:
-        st.info("No stock movements to export.")
-
+st.sidebar.caption("Business Tracker")
