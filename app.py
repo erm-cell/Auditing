@@ -133,29 +133,44 @@ textarea::placeholder {
     color: #FFFFFF !important;
 }
 
-/* Buttons */
+
+/* BUTTONS - FIXED TEXT VISIBILITY */
+
 .stButton button,
-.stFormSubmitButton button {
-    background-color: #FFFFFF;
+.stFormSubmitButton button,
+.stDownloadButton button {
+    background-color: #FFFFFF !important;
     color: #101114 !important;
-    border: none;
+    border: 1px solid #FFFFFF !important;
     border-radius: 8px;
     font-family: 'Anton', sans-serif !important;
+    font-weight: 400 !important;
     min-height: 42px;
-    transition: 0.2s ease;
 }
 
+/* Force all button text to be dark */
+.stButton button *,
+.stFormSubmitButton button *,
+.stDownloadButton button * {
+    color: #101114 !important;
+    -webkit-text-fill-color: #101114 !important;
+}
+
+/* Button hover */
 .stButton button:hover,
-.stFormSubmitButton button:hover {
-    background-color: #D5D5D5;
+.stFormSubmitButton button:hover,
+.stDownloadButton button:hover {
+    background-color: #D5D5D5 !important;
+    border-color: #D5D5D5 !important;
     color: #101114 !important;
 }
 
-/* Download buttons */
-.stDownloadButton button {
-    background-color: #FFFFFF;
+/* Button hover text */
+.stButton button:hover *,
+.stFormSubmitButton button:hover *,
+.stDownloadButton button:hover * {
     color: #101114 !important;
-    border-radius: 8px;
+    -webkit-text-fill-color: #101114 !important;
 }
 
 /* Tabs */
