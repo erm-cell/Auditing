@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DB_PATH = Path(__file__).parent / "business.db"
+DB_PATH = Path(__file__).parent / "business_data.db"
 
 # Set this in Streamlit secrets.
 ACCESS_CODE = st.secrets.get("APP_ACCESS_CODE", "")
